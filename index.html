@@ -2,19 +2,32 @@
 <html>
 <head>
   <title>🎴 Карткова гра - повні правила</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
   <script src="/socket.io/socket.io.js"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
       background: linear-gradient(135deg, #1a472a 0%, #0e2a1a 100%);
       min-height: 100vh;
       color: white;
-      padding: 12px;
+      padding: 10px;
     }
-    .container { max-width: 1200px; margin: 0 auto; }
-    h1 { text-align: center; margin-bottom: 20px; font-size: 1.8em; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 15px;
+      font-size: 1.6em;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
     #lobby {
       background: rgba(0,0,0,0.7);
       border-radius: 20px;
@@ -24,106 +37,138 @@
       margin: 30px auto;
     }
     input, button {
-      padding: 12px 20px;
+      padding: 14px 20px;
       margin: 8px;
-      font-size: 16px;
+      font-size: 18px;
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
       cursor: pointer;
     }
-    input { background: white; color: black; width: 80%; max-width: 220px; }
-    button { background: gold; color: #1a472a; font-weight: bold; transition: transform 0.2s; }
-    button:active { transform: scale(0.98); }
+    input {
+      background: white;
+      color: black;
+      width: 80%;
+      max-width: 250px;
+      text-align: center;
+    }
+    button {
+      background: gold;
+      color: #1a472a;
+      font-weight: bold;
+      transition: transform 0.1s;
+    }
+    button:active {
+      transform: scale(0.97);
+    }
     #game {
       background: rgba(0,0,0,0.5);
       border-radius: 20px;
-      padding: 15px;
+      padding: 12px;
       display: none;
     }
-    .room-info { text-align: center; margin-bottom: 15px; font-size: 16px; }
-    .room-code { background: gold; color: #1a472a; padding: 5px 12px; border-radius: 15px; font-weight: bold; display: inline-block; font-size: 18px; }
+    .room-info {
+      text-align: center;
+      margin-bottom: 12px;
+      font-size: 16px;
+    }
+    .room-code {
+      background: gold;
+      color: #1a472a;
+      padding: 6px 12px;
+      border-radius: 15px;
+      font-weight: bold;
+      display: inline-block;
+      font-size: 20px;
+    }
     .players {
       background: rgba(255,255,255,0.1);
       border-radius: 15px;
-      padding: 12px;
-      margin: 15px 0;
+      padding: 10px;
+      margin: 12px 0;
     }
-    .players h3 { margin-bottom: 8px; font-size: 16px; }
-    .players-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .players h3 {
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+    .players-list {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
     .player-card {
       background: rgba(255,255,255,0.2);
       border-radius: 10px;
-      padding: 8px 12px;
+      padding: 6px 10px;
       font-size: 14px;
     }
-    .trump { text-align: center; font-size: 20px; margin: 15px 0; }
+    .trump {
+      text-align: center;
+      font-size: 20px;
+      margin: 12px 0;
+    }
     .trump-card {
       display: inline-block;
       background: white;
       color: black;
-      padding: 8px 16px;
-      border-radius: 10px;
+      padding: 8px 20px;
+      border-radius: 12px;
       font-size: 28px;
       font-weight: bold;
-    }
-    .game-area {
-      margin-top: 20px;
     }
     .players-board {
       display: flex;
       flex-wrap: wrap;
-      gap: 15px;
+      gap: 12px;
       justify-content: center;
       margin-bottom: 20px;
     }
     .player-board {
       background: rgba(0,0,0,0.4);
       border-radius: 15px;
-      padding: 10px;
-      min-width: 140px;
+      padding: 8px;
+      min-width: 100px;
       text-align: center;
     }
     .player-board.current {
       border: 3px solid gold;
-      box-shadow: 0 0 10px gold;
+      box-shadow: 0 0 8px gold;
     }
     .open-card {
-      font-size: 32px;
+      font-size: 28px;
       background: white;
       color: black;
       display: inline-block;
-      padding: 10px;
+      padding: 6px 12px;
       border-radius: 10px;
-      margin: 8px 0;
+      margin: 6px 0;
     }
     .hidden-count {
-      font-size: 14px;
+      font-size: 12px;
       color: #ccc;
     }
     .your-area {
       background: rgba(0,0,0,0.5);
       border-radius: 15px;
-      padding: 15px;
+      padding: 12px;
       margin-top: 15px;
     }
     .your-cards {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 8px;
       justify-content: center;
-      margin: 15px 0;
+      margin: 12px 0;
     }
     .card {
       background: white;
       color: black;
-      padding: 12px 16px;
-      border-radius: 8px;
+      padding: 10px 14px;
+      border-radius: 10px;
       font-size: 20px;
       font-weight: bold;
       cursor: pointer;
-      transition: transform 0.1s;
     }
-    .card:active { transform: scale(0.95); }
     .drawn-card {
       background: #ffd700;
       color: #1a472a;
@@ -133,21 +178,28 @@
       margin: 15px 0;
     }
     .drawn-card .card {
-      font-size: 40px;
+      font-size: 48px;
       display: inline-block;
       background: white;
+      padding: 15px 25px;
     }
     .action-buttons {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 15px;
       justify-content: center;
       margin: 15px 0;
     }
     .action-btn {
       background: #2196F3;
       color: white;
-      padding: 10px 20px;
+      padding: 14px 24px;
+      font-size: 18px;
+      border-radius: 30px;
+      min-width: 160px;
+    }
+    .action-btn:active {
+      transform: scale(0.96);
     }
     .log {
       background: rgba(0,0,0,0.5);
@@ -158,26 +210,48 @@
       font-size: 12px;
       margin-top: 15px;
     }
-    .log p { padding: 3px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .log p {
+      padding: 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
     #startBtn {
       background: #4CAF50;
       color: white;
-      font-size: 18px;
-      padding: 12px 25px;
+      font-size: 20px;
+      padding: 14px 30px;
       margin-top: 15px;
       width: 100%;
     }
-    .waiting { text-align: center; font-size: 16px; color: gold; padding: 15px; }
-    .error-text { color: #ff6b6b; margin-top: 10px; font-size: 14px; }
+    .waiting {
+      text-align: center;
+      font-size: 16px;
+      color: gold;
+      padding: 15px;
+    }
+    .error-text {
+      color: #ff6b6b;
+      margin-top: 10px;
+      font-size: 14px;
+    }
     @media (max-width: 600px) {
-      .open-card { font-size: 24px; }
-      .card { padding: 8px 12px; font-size: 16px; }
+      .action-btn {
+        min-width: 130px;
+        padding: 12px 18px;
+        font-size: 16px;
+      }
+      .card {
+        font-size: 18px;
+        padding: 8px 12px;
+      }
+      .open-card {
+        font-size: 24px;
+      }
     }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>🎴 ОНЛАЙН КАРТКОВА ГРА 🎴</h1>
+  <h1>🎴 КАРТКОВА ГРА 🎴</h1>
   
   <div id="lobby">
     <h2>🎮 Створи або приєднайся</h2>
@@ -191,7 +265,7 @@
   <div id="game">
     <div class="room-info">
       🏠 Кімната: <span class="room-code" id="roomId"></span>
-      <button onclick="copyRoomCode()" style="margin-left: 8px; padding: 4px 10px; font-size: 12px;">📋 Копія</button>
+      <button onclick="copyRoomCode()" style="margin-left: 8px; padding: 6px 12px; font-size: 14px;">📋 Копія</button>
     </div>
     <div class="players">
       <h3>👥 Гравці (<span id="playerCount">0</span>/6)</h3>
@@ -262,7 +336,10 @@
   
   socket.on('updateState', (state) => {
     gameState = state;
-    if (state.log) state.log.forEach(msg => addLog(msg));
+    if (state.log && state.log.length) {
+      const lastMsg = state.log[state.log.length - 1];
+      if (lastMsg) addLog(lastMsg);
+    }
     renderGame();
   });
   
@@ -309,6 +386,7 @@
       for (let card of me.hand) {
         html += `<div class="card">${card.value}${card.suit}</div>`;
       }
+      if (me.hand.length === 0) html += `<p style="color:#ccc;">(немає карт на руках)</p>`;
       html += `</div>`;
       
       if (drawnCard && gameState.phase === 'drawing') {
@@ -330,15 +408,21 @@
   }
   
   function drawCard() { socket.emit('drawCard', currentRoomId); }
-  function takeToHand() { socket.emit('takeToHand', currentRoomId); drawnCard = null; }
+  function takeToHand() { socket.emit('takeToHand', currentRoomId); drawnCard = null; renderGame(); }
   function placeOnPlayer() {
     const players = gameState?.players;
     if (!players) return;
-    const target = prompt("Введи ім'я гравця, на кого покласти карту:", players.find(p => p.id !== socket.id)?.name);
-    if (target) {
-      const targetPlayer = players.find(p => p.name === target);
-      if (targetPlayer) socket.emit('placeCard', currentRoomId, targetPlayer.id);
-      else alert('Гравця не знайдено');
+    const otherPlayers = players.filter(p => p.id !== socket.id);
+    if (otherPlayers.length === 0) { alert("Немає інших гравців"); return; }
+    let targetNames = otherPlayers.map(p => p.name).join(", ");
+    let targetName = prompt("Введи ім'я гравця, на кого покласти карту:\nДоступні: " + targetNames);
+    if (targetName) {
+      const targetPlayer = players.find(p => p.name === targetName);
+      if (targetPlayer) {
+        socket.emit('placeCard', currentRoomId, targetPlayer.id);
+        drawnCard = null;
+        renderGame();
+      } else alert('Гравця не знайдено. Введи точно ім\'я');
     }
   }
   function refreshGame() { if (gameState) renderGame(); }
