@@ -9,7 +9,7 @@ const io = socketIo(server);
 app.use(express.static(__dirname));
 
 const suits = ['♥', '♦', '♣', '♠'];
-const values = ['6','7','8','9','10','J','Q','K','A'];
+const values = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 let fullDeck = [];
 
 for (let s of suits) {
@@ -27,7 +27,7 @@ function shuffle(d) {
 }
 
 function getValueRank(value) {
-  const order = ['6','7','8','9','10','J','Q','K','A'];
+  const order = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
   return order.indexOf(value);
 }
 
@@ -43,7 +43,7 @@ const rooms = new Map();
 let globalPlayerCounter = 0;
 
 io.on('connection', (socket) => {
-  console.log('👤 Гравець підключився:', socket.id);
+  console.log('Player connected:', socket.id);
 
   socket.on('createGame', () => {
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -51,45 +51,75 @@ io.on('connection', (socket) => {
     const playerNumber = globalPlayerCounter;
     rooms.set(roomId, {
       players: [socket.id],
-      playerNames: [{ id: socket.id, name: `Гравець ${playerNumber}` }],
+      playerNames: [{ id: socket.id, name: `Player ${playerNumber}` }],
       gameState: null,
       penaltyCards: new Map(),
       round: 1,
-      playerCounter: playerNumber
+      playerCounter: playerNumber,
+      missedRedraws: new Map()
     });
     socket.join(roomId);
     socket.emit('gameCreated', roomId);
-    console.log(`🎮 Кімнату створено: ${roomId}`);
+    console.log(`Room created: ${roomId}`);
   });
 
   socket.on('joinGame', (roomId) => {
     if (!rooms.has(roomId)) {
-      socket.emit('error', '❌ Кімнати не існує');
+      socket.emit('error', 'Room does not exist');
       return;
     }
     const room = rooms.get(roomId);
     if (room.players.length >= 6) {
-      socket.emit('error', '❌ Кімната повна (макс 6 гравців)');
+      socket.emit('error', 'Room is full (max 6 players)');
       return;
     }
     room.playerCounter++;
     const playerNumber = room.playerCounter;
     room.players.push(socket.id);
-    room.playerNames.push({ id: socket.id, name: `Гравець ${playerNumber}` });
+    room.playerNames.push({ id: socket.id, name: `Player ${playerNumber}` });
     socket.join(roomId);
     socket.emit('joined', roomId);
     io.to(roomId).emit('playerJoined', { count: room.players.length, players: room.playerNames });
-    console.log(`👥 У кімнаті ${roomId} тепер ${room.players.length} гравців`);
+    console.log(`Room ${roomId} now has ${room.players.length} players`);
   });
 
   socket.on('startGame', (roomId) => {
     const room = rooms.get(roomId);
     if (!room || room.players.length < 2) {
-      socket.emit('error', '❌ Потрібно мінімум 2 гравці');
+      socket.emit('error', 'Need at least 2 players');
       return;
     }
     startNewRound(roomId);
   });
+
+  function applyPenalties(roomId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+    
+    const state = room.gameState;
+    const missedPlayers = room.missedRedraws || new Map();
+    
+    for (let [playerId, missed] of missedPlayers) {
+      if (missed > 0) {
+        const player = state.players.find(p => p.id === playerId);
+        if (player) {
+          state.log.push(`⚠️ ${player.name} не переклав ${missed} можливу карту! Штраф...`);
+          
+          // Всі інші гравці скидають по 1 карті
+          for (let other of state.players) {
+            if (other.id !== playerId && other.hand.length > 0) {
+              const penaltyCard = other.hand.pop();
+              player.hand.push(penaltyCard);
+              state.log.push(`  ${other.name} скинув ${penaltyCard.value}${penaltyCard.suit} ${player.name}`);
+            }
+          }
+        }
+      }
+    }
+    
+    room.missedRedraws = new Map();
+    io.to(roomId).emit('updateState', state);
+  }
 
   function startNewRound(roomId) {
     const room = rooms.get(roomId);
@@ -124,10 +154,11 @@ io.on('connection', (socket) => {
       trump: trump,
       players: playersData,
       currentDrawPlayer: 0,
-      phase: 'drawing',
-      log: [`🎴 Раунд ${room.round} почався! Козир: ${trump.value}${trump.suit}`],
+      phase: 'redraw',  // Нова фаза: перекладання перед ходом
+      log: [`🎴 Round ${room.round} started! Trump: ${trump.value}${trump.suit}`, `🔄 Тепер час перекласти карти (якщо можете)`],
       lastDrawnCard: null,
-      waitingForPlace: false
+      waitingForPlace: false,
+      redrawPhaseActive: true
     };
     
     for (let p of room.gameState.players) {
@@ -142,19 +173,149 @@ io.on('connection', (socket) => {
     }
     
     io.to(roomId).emit('updateState', room.gameState);
-    announceTurn(roomId);
+    startRedrawPhase(roomId);
   }
+
+  function startRedrawPhase(roomId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+    
+    room.gameState.phase = 'redraw';
+    room.gameState.redrawPhaseActive = true;
+    room.missedRedraws = new Map();
+    
+    io.to(roomId).emit('redrawPhaseStart', { message: 'Можете перекладати свої карти іншим гравцям' });
+    announceRedrawTurn(roomId);
+  }
+
+  function announceRedrawTurn(roomId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+    const state = room.gameState;
+    
+    if (!state.redrawPhaseActive) {
+      // Фаза перекладання завершена
+      state.phase = 'drawing';
+      io.to(roomId).emit('updateState', state);
+      announceTurn(roomId);
+      return;
+    }
+    
+    // Знаходимо наступного гравця, який ще не переклав
+    let currentPlayer = null;
+    for (let i = 0; i < state.players.length; i++) {
+      const p = state.players[i];
+      if (!p.hasRedrawn && p.isActive) {
+        currentPlayer = p;
+        state.currentDrawPlayer = i;
+        break;
+      }
+    }
+    
+    if (!currentPlayer) {
+      // Всі переклали — завершуємо фазу
+      state.redrawPhaseActive = false;
+      applyPenalties(roomId);
+      state.phase = 'drawing';
+      io.to(roomId).emit('updateState', state);
+      announceTurn(roomId);
+      return;
+    }
+    
+    io.to(roomId).emit('redrawTurn', { 
+      playerId: currentPlayer.id, 
+      playerName: currentPlayer.name,
+      openCard: currentPlayer.openCard
+    });
+  }
+
+  socket.on('redrawCard', (roomId, targetPlayerId) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState || !room.gameState.redrawPhaseActive) return;
+    
+    const state = room.gameState;
+    const player = state.players.find(p => p.id === socket.id);
+    const targetPlayer = state.players.find(p => p.id === targetPlayerId);
+    
+    if (!player || !targetPlayer) {
+      socket.emit('error', 'Гравець не знайдений');
+      return;
+    }
+    
+    if (player.hasRedrawn) {
+      socket.emit('error', 'Ви вже переклали карту в цьому раунді');
+      return;
+    }
+    
+    if (player.openCard === null) {
+      socket.emit('error', 'У вас немає відкритої карти для перекладання');
+      return;
+    }
+    
+    // Перевіряємо, чи можна перекласти (карта на 1 нижче)
+    if (!isOneLower(player.openCard, targetPlayer.openCard)) {
+      socket.emit('error', 'Цю карту не можна перекласти (потрібно на 1 нижче)');
+      return;
+    }
+    
+    // Перекладаємо карту
+    const transferredCard = player.openCard;
+    player.openCard = null;
+    targetPlayer.openCard = transferredCard;
+    player.hasRedrawn = true;
+    
+    state.log.push(`${player.name} переклав ${transferredCard.value}${transferredCard.suit} на ${targetPlayer.name}`);
+    
+    // Перевіряємо, чи залишилась у гравця відкрита карта
+    if (player.openCard === null && player.hidden.length > 0) {
+      player.openCard = player.hidden.pop();
+      state.log.push(`${player.name} відкрив нову карту: ${player.openCard.value}${player.openCard.suit}`);
+    }
+    
+    io.to(roomId).emit('updateState', state);
+    
+    // Переходимо до наступного гравця
+    announceRedrawTurn(roomId);
+  });
+
+  socket.on('skipRedraw', (roomId) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState || !room.gameState.redrawPhaseActive) return;
+    
+    const state = room.gameState;
+    const player = state.players.find(p => p.id === socket.id);
+    
+    if (!player || player.hasRedrawn) return;
+    
+    // Перевіряємо, чи МІГ гравець перекласти карту
+    let couldRedraw = false;
+    for (let other of state.players) {
+      if (other.id !== player.id && other.openCard && isOneLower(player.openCard, other.openCard)) {
+        couldRedraw = true;
+        break;
+      }
+    }
+    
+    if (couldRedraw) {
+      // Запам'ятовуємо, що гравець пропустив можливість
+      const missed = room.missedRedraws.get(player.id) || 0;
+      room.missedRedraws.set(player.id, missed + 1);
+      state.log.push(`${player.name} вирішив не перекладати карту (була можливість)`);
+    }
+    
+    player.hasRedrawn = true;
+    announceRedrawTurn(roomId);
+  });
 
   function announceTurn(roomId) {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
     const state = room.gameState;
     
-    // Перевірка на переможця
     const activePlayers = state.players.filter(p => p.isActive);
     if (activePlayers.length === 1) {
       const winner = activePlayers[0];
-      io.to(roomId).emit('gameEnd', { winner: winner.name, message: `🏆 ${winner.name} переміг!` });
+      io.to(roomId).emit('gameEnd', { winner: winner.name, message: `🏆 ${winner.name} wins!` });
       room.penaltyCards.set(winner.id, 2);
       for (let p of state.players) {
         if (p.id !== winner.id) {
@@ -167,7 +328,6 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // Пропускаємо неактивних гравців
     let attempts = 0;
     while (state.players[state.currentDrawPlayer] && !state.players[state.currentDrawPlayer].isActive && attempts < state.players.length) {
       state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
@@ -189,17 +349,17 @@ io.on('connection', (socket) => {
     const player = state.players.find(p => p.id === socket.id);
     
     if (!player || state.players[state.currentDrawPlayer].id !== socket.id) {
-      socket.emit('error', '❌ Зараз не твоя черга тягнути');
+      socket.emit('error', 'Not your turn to draw');
       return;
     }
     
     if (state.phase !== 'drawing') {
-      socket.emit('error', '❌ Зараз не фаза тягнення');
+      socket.emit('error', 'Not drawing phase');
       return;
     }
     
     if (state.deck.length === 0) {
-      socket.emit('error', '❌ Колода порожня!');
+      socket.emit('error', 'Deck is empty!');
       return;
     }
     
@@ -216,30 +376,29 @@ io.on('connection', (socket) => {
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
     
-    if (!player || !state.waitingForPlace || state.phase !== 'drawing') {
-      socket.emit('error', '❌ Не можна покласти карту зараз');
+    if (!player || !state.waitingForPlace) {
+      socket.emit('error', 'Cannot place card now');
       return;
     }
     
     const targetPlayer = state.players.find(p => p.id === targetPlayerId);
     if (!targetPlayer || !targetPlayer.openCard) {
-      socket.emit('error', '❌ Не можна покласти на цю карту');
+      socket.emit('error', 'Cannot place on this card');
       return;
     }
     
     if (isOneLower(state.lastDrawnCard, targetPlayer.openCard)) {
       targetPlayer.openCard = state.lastDrawnCard;
-      state.log.push(`${player.name} поклав ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} на карту ${targetPlayer.name}`);
+      state.log.push(`${player.name} placed ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} on ${targetPlayer.name}'s card`);
       state.waitingForPlace = false;
       state.lastDrawnCard = null;
       
       io.to(roomId).emit('updateState', state);
       
-      // Перехід до наступного гравця
       state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
       announceTurn(roomId);
     } else {
-      socket.emit('error', '❌ Цю карту не можна покласти (потрібно на 1 нижче)');
+      socket.emit('error', 'Cannot place this card (need 1 lower)');
     }
   });
 
@@ -249,24 +408,23 @@ io.on('connection', (socket) => {
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
     
-    if (!player || !state.waitingForPlace || state.phase !== 'drawing') {
-      socket.emit('error', '❌ Не можна забрати карту зараз');
+    if (!player || !state.waitingForPlace) {
+      socket.emit('error', 'Cannot take card now');
       return;
     }
     
     player.hand.push(state.lastDrawnCard);
-    state.log.push(`${player.name} забрав карту ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} собі`);
+    state.log.push(`${player.name} took ${state.lastDrawnCard.value}${state.lastDrawnCard.suit}`);
     state.waitingForPlace = false;
     state.lastDrawnCard = null;
     io.to(roomId).emit('updateState', state);
     
-    // Перехід до наступного гравця
     state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
     announceTurn(roomId);
   });
 
   socket.on('disconnect', () => {
-    console.log('❌ Гравець відключився:', socket.id);
+    console.log('Player disconnected:', socket.id);
     for (let [roomId, room] of rooms.entries()) {
       const index = room.players.indexOf(socket.id);
       if (index !== -1) {
@@ -292,6 +450,5 @@ io.on('connection', (socket) => {
 
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
-  console.log(`🎮 Сервер запущено на порту ${port}`);
-  console.log('📋 Повна версія гри за твоїми правилами');
+  console.log(`🎮 Server running on port ${port}`);
 });
