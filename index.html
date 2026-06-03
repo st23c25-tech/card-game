@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>🎴 Карткова гра - повні правила</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: linear-gradient(135deg, #1a472a 0%, #0e2a1a 100%);
+      min-height: 100vh;
+      color: white;
+      padding: 12px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 20px; font-size: 1.8em; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
+    #lobby {
+      background: rgba(0,0,0,0.7);
+      border-radius: 20px;
+      padding: 25px;
+      text-align: center;
+      max-width: 400px;
+      margin: 30px auto;
+    }
+    input, button {
+      padding: 12px 20px;
+      margin: 8px;
+      font-size: 16px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    input { background: white; color: black; width: 80%; max-width: 220px; }
+    button { background: gold; color: #1a472a; font-weight: bold; transition: transform 0.2s; }
+    button:active { transform: scale(0.98); }
+    #game {
+      background: rgba(0,0,0,0.5);
+      border-radius: 20px;
+      padding: 15px;
+      display: none;
+    }
+    .room-info { text-align: center; margin-bottom: 15px; font-size: 16px; }
+    .room-code { background: gold; color: #1a472a; padding: 5px 12px; border-radius: 15px; font-weight: bold; display: inline-block; font-size: 18px; }
+    .players {
+      background: rgba(255,255,255,0.1);
+      border-radius: 15px;
+      padding: 12px;
+      margin: 15px 0;
+    }
+    .players h3 { margin-bottom: 8px; font-size: 16px; }
+    .players-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .player-card {
+      background: rgba(255,255,255,0.2);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+    .trump { text-align: center; font-size: 20px; margin: 15px 0; }
+    .trump-card {
+      display: inline-block;
+      background: white;
+      color: black;
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-size: 28px;
+      font-weight: bold;
+    }
+    .game-area {
+      margin-top: 20px;
+    }
+    .players-board {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    .player-board {
+      background: rgba(0,0,0,0.4);
+      border-radius: 15px;
+      padding: 10px;
+      min-width: 140px;
+      text-align: center;
+    }
+    .player-board.current {
+      border: 3px solid gold;
+      box-shadow: 0 0 10px gold;
+    }
+    .open-card {
+      font-size: 32px;
+      background: white;
+      color: black;
+      display: inline-block;
+      padding: 10px;
+      border-radius: 10px;
+      margin: 8px 0;
+    }
+    .hidden-count {
+      font-size: 14px;
+      color: #ccc;
+    }
+    .your-area {
+      background: rgba(0,0,0,0.5);
+      border-radius: 15px;
+      padding: 15px;
+      margin-top: 15px;
+    }
+    .your-cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin: 15px 0;
+    }
+    .card {
+      background: white;
+      color: black;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    .card:active { transform: scale(0.95); }
+    .drawn-card {
+      background: #ffd700;
+      color: #1a472a;
+      padding: 15px;
+      border-radius: 15px;
+      text-align: center;
+      margin: 15px 0;
+    }
+    .drawn-card .card {
+      font-size: 40px;
+      display: inline-block;
+      background: white;
+    }
+    .action-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin: 15px 0;
+    }
+    .action-btn {
+      background: #2196F3;
+      color: white;
+      padding: 10px 20px;
+    }
+    .log {
+      background: rgba(0,0,0,0.5);
+      border-radius: 10px;
+      padding: 10px;
+      height: 150px;
+      overflow-y: auto;
+      font-size: 12px;
+      margin-top: 15px;
+    }
+    .log p { padding: 3px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    #startBtn {
+      background: #4CAF50;
+      color: white;
+      font-size: 18px;
+      padding: 12px 25px;
+      margin-top: 15px;
+      width: 100%;
+    }
+    .waiting { text-align: center; font-size: 16px; color: gold; padding: 15px; }
+    .error-text { color: #ff6b6b; margin-top: 10px; font-size: 14px; }
+    @media (max-width: 600px) {
+      .open-card { font-size: 24px; }
+      .card { padding: 8px 12px; font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🎴 ОНЛАЙН КАРТКОВА ГРА 🎴</h1>
+  
+  <div id="lobby">
+    <h2>🎮 Створи або приєднайся</h2>
+    <button onclick="createGame()">➕ Створити гру</button>
+    <br>
+    <input type="text" id="roomCode" placeholder="Код кімнати" autocomplete="off">
+    <button onclick="joinGame()">🔗 Приєднатися</button>
+    <div id="lobbyError" class="error-text"></div>
+  </div>
+  
+  <div id="game">
+    <div class="room-info">
+      🏠 Кімната: <span class="room-code" id="roomId"></span>
+      <button onclick="copyRoomCode()" style="margin-left: 8px; padding: 4px 10px; font-size: 12px;">📋 Копія</button>
+    </div>
+    <div class="players">
+      <h3>👥 Гравці (<span id="playerCount">0</span>/6)</h3>
+      <div class="players-list" id="playersList"></div>
+    </div>
+    <div id="gameArea">
+      <div class="waiting">⚡ Очікуємо гравців... (мінімум 2)</div>
+      <button id="startBtn" onclick="startGame()">🚀 Почати гру</button>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+  const socket = io();
+  let currentRoomId = null;
+  let gameState = null;
+  let myId = null;
+  let drawnCard = null;
+  
+  function addLog(message) {
+    const logDiv = document.getElementById('log');
+    const p = document.createElement('p');
+    p.textContent = message;
+    logDiv.appendChild(p);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+  
+  function createGame() { socket.emit('createGame'); }
+  function joinGame() {
+    const code = document.getElementById('roomCode').value.trim().toUpperCase();
+    if (!code) { document.getElementById('lobbyError').textContent = '❌ Введіть код кімнати'; return; }
+    socket.emit('joinGame', code);
+  }
+  function copyRoomCode() {
+    if (currentRoomId) { navigator.clipboard.writeText(currentRoomId); addLog('📋 Код скопійовано!'); }
+  }
+  function startGame() { if (currentRoomId) socket.emit('startGame', currentRoomId); }
+  
+  socket.on('gameCreated', (roomId) => {
+    currentRoomId = roomId;
+    document.getElementById('lobby').style.display = 'none';
+    document.getElementById('game').style.display = 'block';
+    document.getElementById('roomId').textContent = roomId;
+    addLog(`✅ Ви створили кімнату ${roomId}`);
+  });
+  
+  socket.on('joined', (roomId) => {
+    currentRoomId = roomId;
+    document.getElementById('lobby').style.display = 'none';
+    document.getElementById('game').style.display = 'block';
+    document.getElementById('roomId').textContent = roomId;
+    addLog(`✅ Ви приєдналися до кімнати ${roomId}`);
+  });
+  
+  socket.on('playerJoined', (data) => {
+    document.getElementById('playerCount').textContent = data.count;
+    const playersDiv = document.getElementById('playersList');
+    playersDiv.innerHTML = data.players.map(p => `<div class="player-card">${p.name}</div>`).join('');
+  });
+  
+  socket.on('gameStarted', (data) => {
+    myId = socket.id;
+    addLog(`🎮 ГРА ПОЧАЛАСЯ! Козир: ${data.trump.value}${data.trump.suit}`);
+    addLog(`🃏 У тебе ${data.hiddenCards.length} закритих карт`);
+    document.getElementById('gameArea').innerHTML = '<div class="game-area" id="gameAreaInner"></div>';
+  });
+  
+  socket.on('updateState', (state) => {
+    gameState = state;
+    if (state.log) state.log.forEach(msg => addLog(msg));
+    renderGame();
+  });
+  
+  socket.on('cardDrawn', (data) => {
+    if (data.playerId === socket.id) {
+      drawnCard = data.card;
+      addLog(`🎴 Ви витягнули карту: ${data.card.value}${data.card.suit}`);
+      renderGame();
+    } else {
+      addLog(`🎴 Гравець витягнув карту`);
+    }
+  });
+  
+  socket.on('nextTurn', (data) => {
+    if (data.phase === 'drawing') {
+      if (data.playerId === socket.id) addLog('🔄 Ваша черга тягнути карту');
+      else addLog(`🔄 Черга іншого гравця`);
+      renderGame();
+    }
+  });
+  
+  function renderGame() {
+    if (!gameState) return;
+    const container = document.getElementById('gameAreaInner');
+    if (!container) return;
+    
+    let html = `<div class="trump">🃏 КОЗИР: <span class="trump-card">${gameState.trump.value}${gameState.trump.suit}</span></div>`;
+    html += `<div class="players-board">`;
+    for (let p of gameState.players) {
+      const isCurrent = (gameState.phase === 'drawing' && gameState.currentDrawPlayer !== undefined && gameState.players[gameState.currentDrawPlayer]?.id === p.id);
+      html += `<div class="player-board ${isCurrent ? 'current' : ''}">
+        <strong>${p.name}</strong>
+        <div class="open-card">${p.openCard ? p.openCard.value + p.openCard.suit : '❓'}</div>
+        <div class="hidden-count">🔒 ${p.hidden?.length || 0} закритих</div>
+      </div>`;
+    }
+    html += `</div>`;
+    
+    const me = gameState.players.find(p => p.id === socket.id);
+    if (me) {
+      html += `<div class="your-area">
+        <h3>🎴 Ваші карти:</h3>
+        <div class="your-cards">`;
+      for (let card of me.hand) {
+        html += `<div class="card">${card.value}${card.suit}</div>`;
+      }
+      html += `</div>`;
+      
+      if (drawnCard && gameState.phase === 'drawing') {
+        html += `<div class="drawn-card">
+          <div class="card">${drawnCard.value}${drawnCard.suit}</div>
+          <div class="action-buttons">
+            <button class="action-btn" onclick="placeOnPlayer()">📤 Покласти на гравця</button>
+            <button class="action-btn" onclick="takeToHand()">🤚 Забрати собі</button>
+          </div>
+        </div>`;
+      } else if (gameState.phase === 'drawing' && gameState.players[gameState.currentDrawPlayer]?.id === socket.id && !drawnCard) {
+        html += `<div class="action-buttons"><button class="action-btn" onclick="drawCard()">🎴 Тягнути карту</button></div>`;
+      }
+    }
+    
+    html += `<div class="action-buttons"><button class="action-btn" onclick="refreshGame()">🔄 Оновити</button></div>`;
+    html += `</div>`;
+    container.innerHTML = html;
+  }
+  
+  function drawCard() { socket.emit('drawCard', currentRoomId); }
+  function takeToHand() { socket.emit('takeToHand', currentRoomId); drawnCard = null; }
+  function placeOnPlayer() {
+    const players = gameState?.players;
+    if (!players) return;
+    const target = prompt("Введи ім'я гравця, на кого покласти карту:", players.find(p => p.id !== socket.id)?.name);
+    if (target) {
+      const targetPlayer = players.find(p => p.name === target);
+      if (targetPlayer) socket.emit('placeCard', currentRoomId, targetPlayer.id);
+      else alert('Гравця не знайдено');
+    }
+  }
+  function refreshGame() { if (gameState) renderGame(); }
+  
+  socket.on('error', (msg) => {
+    document.getElementById('lobbyError').textContent = msg;
+    setTimeout(() => { document.getElementById('lobbyError').textContent = ''; }, 3000);
+  });
+</script>
+</body>
+</html>
