@@ -12,52 +12,77 @@
       padding: 10px;
     }
     button {
-      padding: 12px 20px;
-      margin: 5px;
+      padding: 14px 24px;
+      margin: 8px;
       font-size: 16px;
       background: gold;
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
       font-weight: bold;
+      cursor: pointer;
     }
     .log {
       background: rgba(0,0,0,0.5);
       padding: 10px;
       border-radius: 10px;
-      height: 200px;
+      height: 150px;
       overflow-y: auto;
       margin-top: 15px;
       font-size: 12px;
     }
-    .players {
+    .players-board {
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
       margin: 15px 0;
     }
-    .player {
+    .player-card {
       background: rgba(0,0,0,0.5);
       padding: 10px;
       border-radius: 10px;
       min-width: 100px;
       text-align: center;
     }
-    .player.current {
+    .player-card.current {
       border: 3px solid gold;
     }
     .open-card {
-      font-size: 24px;
+      font-size: 28px;
       background: white;
       color: black;
-      padding: 5px 10px;
-      border-radius: 8px;
       display: inline-block;
-      margin: 5px 0;
+      padding: 8px 15px;
+      border-radius: 10px;
+      margin: 8px 0;
+    }
+    .big-card {
+      background: white;
+      color: black;
+      display: inline-block;
+      padding: 15px 25px;
+      border-radius: 10px;
+      font-size: 32px;
+      font-weight: bold;
+      margin: 10px;
+    }
+    .action-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin: 15px 0;
+    }
+    .phase-panel {
+      background: rgba(0,0,0,0.6);
+      padding: 15px;
+      border-radius: 15px;
+      margin: 10px 0;
+      text-align: center;
     }
   </style>
 </head>
 <body>
-<h1>КАРТКОВА ГРА</h1>
+<h1>🎴 КАРТКОВА ГРА</h1>
 
 <div id="lobby">
   <button onclick="createGame()">Створити гру</button><br>
@@ -67,7 +92,7 @@
 </div>
 
 <div id="game" style="display:none;">
-  <div>Кімната: <b id="roomId"></b></div>
+  <div>Кімната: <b id="roomId"></b> <button onclick="copyCode()">Копіювати</button></div>
   <div id="players"></div>
   <div id="gameArea"></div>
   <div class="log" id="log"></div>
@@ -79,20 +104,22 @@
   let gameState = null;
   let drawnCard = null;
 
-  function log(msg) {
-    const l = document.getElementById('log');
-    if (l) l.innerHTML += `<p>${msg}</p>`;
+  function addLog(msg) {
+    const log = document.getElementById('log');
+    if (log) log.innerHTML += `<p>${msg}</p>`;
+    log.scrollTop = log.scrollHeight;
   }
 
   function createGame() { socket.emit('createGame'); }
   function joinGame() { socket.emit('joinGame', document.getElementById('roomCode').value.trim().toUpperCase()); }
+  function copyCode() { navigator.clipboard.writeText(roomId); }
 
   socket.on('gameCreated', (id) => {
     roomId = id;
     document.getElementById('lobby').style.display = 'none';
     document.getElementById('game').style.display = 'block';
     document.getElementById('roomId').textContent = id;
-    log('Створено кімнату: ' + id);
+    addLog('✅ Кімнату створено! Код: ' + id);
   });
 
   socket.on('joined', (id) => {
@@ -100,66 +127,107 @@
     document.getElementById('lobby').style.display = 'none';
     document.getElementById('game').style.display = 'block';
     document.getElementById('roomId').textContent = id;
-    log('Приєднано до кімнати');
+    addLog('✅ Приєднано до кімнати!');
   });
 
   socket.on('playerJoined', (data) => {
-    document.getElementById('players').innerHTML = 'Гравці: ' + data.players.map(p => p.name).join(', ') + ' (' + data.count + '/6)';
+    document.getElementById('players').innerHTML = `👥 Гравці: ${data.players.map(p => p.name).join(', ')} (${data.count}/6)`;
     if (data.count >= 2 && !document.getElementById('startBtn')) {
       const btn = document.createElement('button');
       btn.id = 'startBtn';
-      btn.textContent = 'Почати гру';
+      btn.textContent = '🚀 Почати гру';
       btn.onclick = () => socket.emit('startGame', roomId);
       document.getElementById('players').appendChild(btn);
     }
   });
 
   socket.on('gameStarted', () => {
-    log('ГРА ПОЧАЛАСЯ!');
+    addLog('🎮 ГРА ПОЧАЛАСЯ!');
     document.getElementById('gameArea').innerHTML = '<div id="gameInner"></div>';
   });
 
   socket.on('updateState', (state) => {
     gameState = state;
+    if (state.log && state.log.length) addLog(state.log[state.log.length - 1]);
     renderGame();
   });
 
   socket.on('yourTurn', (data) => {
     if (data.playerId === socket.id) {
-      log('ВАША ЧЕРГА!');
-      showDrawButton();
+      if (data.phase === 'redraw') {
+        addLog(`🎯 ВАША ЧЕРГА! Фаза перекладання`);
+        showRedrawPanel(data);
+      } else if (data.phase === 'drawing') {
+        addLog(`🎯 ВАША ЧЕРГА! Натисніть "Взяти карту"`);
+        showDrawButton();
+      }
     } else {
-      log('Черга: ' + data.playerName);
+      addLog(`🔄 Ходить: ${data.playerName} (${data.phase === 'redraw' ? 'перекладає' : 'тягне карту'})`);
     }
+    renderGame();
   });
 
   socket.on('cardDrawn', (data) => {
     drawnCard = data.card;
-    log('Ви витягнули: ' + data.card.value + data.card.suit);
-    showActionButtons();
+    addLog(`🎴 Ви витягнули: ${data.card.value}${data.card.suit}`);
+    showPlacePanel(data);
   });
 
   function renderGame() {
     if (!gameState) return;
-    let html = '<div class="players">';
+    const container = document.getElementById('gameInner');
+    if (!container) return;
+    
+    let html = '<div class="players-board">';
     for (let i = 0; i < gameState.players.length; i++) {
       const p = gameState.players[i];
-      html += `<div class="player ${gameState.currentTurn === i ? 'current' : ''}">
+      const isCurrent = gameState.currentTurn === i;
+      html += `<div class="player-card ${isCurrent ? 'current' : ''}">
         <b>${p.name}</b><br>
         <div class="open-card">${p.openCard?.value || '?'}${p.openCard?.suit || ''}</div>
         <div>🔒 ${p.hidden?.length || 0}</div>
+        <div>📋 ${p.hand?.length || 0}</div>
       </div>`;
     }
     html += '</div>';
-    document.getElementById('gameInner').innerHTML = html;
+    
+    const me = gameState.players.find(p => p.id === socket.id);
+    if (me && me.hand && me.hand.length > 0) {
+      html += `<div style="background:rgba(0,0,0,0.4); padding:10px; border-radius:10px; margin-top:10px;">
+        <b>🎴 Ваші карти на руках:</b><br>
+        ${me.hand.map(c => `<span style="background:white; color:black; padding:5px 10px; margin:3px; display:inline-block; border-radius:8px;">${c.value}${c.suit}</span>`).join('')}
+      </div>`;
+    }
+    
+    container.innerHTML = html;
+  }
+
+  function showRedrawPanel(data) {
+    const container = document.getElementById('gameInner');
+    if (!container) return;
+    
+    let html = `<div class="phase-panel">
+      <div class="big-card">${gameState.players.find(p => p.id === data.playerId)?.openCard?.value || '?'}${gameState.players.find(p => p.id === data.playerId)?.openCard?.suit || ''}</div>
+      <div class="action-buttons">`;
+    
+    if (data.canRedraw && data.redrawTargets) {
+      for (let t of data.redrawTargets) {
+        html += `<button onclick="redrawCard('${t.id}')">🔄 Перекласти ${t.name} (${t.openCard.value}${t.openCard.suit})</button>`;
+      }
+    }
+    html += `<button onclick="skipRedraw()">⏭️ Пропустити</button>`;
+    html += `</div></div>`;
+    container.innerHTML += html;
   }
 
   function showDrawButton() {
     const container = document.getElementById('gameInner');
-    if (!container || document.getElementById('drawBtn')) return;
+    if (!container) return;
+    if (document.getElementById('drawBtn')) return;
+    
     const btn = document.createElement('button');
     btn.id = 'drawBtn';
-    btn.textContent = 'ТЯГНУТИ КАРТУ';
+    btn.textContent = '🎴 ВЗЯТИ КАРТУ';
     btn.onclick = () => {
       socket.emit('drawCard', roomId);
       btn.remove();
@@ -167,29 +235,39 @@
     container.appendChild(btn);
   }
 
-  function showActionButtons() {
+  function showPlacePanel(data) {
     const container = document.getElementById('gameInner');
-    if (!container || !gameState) return;
+    if (!container) return;
     
-    let html = `<div style="background:gold; padding:15px; border-radius:10px; margin-top:10px;">
-      <div style="background:white; color:black; display:inline-block; padding:10px 20px; border-radius:8px; font-size:24px;">${drawnCard.value}${drawnCard.suit}</div>`;
+    let html = `<div class="phase-panel">
+      <div class="big-card">${data.card.value}${data.card.suit}</div>
+      <div class="action-buttons">`;
     
-    for (let p of gameState.players) {
-      if (p.id !== socket.id && p.openCard) {
-        html += `<button onclick="placeCard('${p.id}')">Покласти на ${p.name}</button>`;
+    if (data.canPlaceToOthers && data.placeTargets) {
+      for (let t of data.placeTargets) {
+        html += `<button onclick="placeOnOther('${t.id}')">📤 Покласти ${t.name} (${t.openCard.value}${t.openCard.suit})</button>`;
       }
     }
-    html += `<button onclick="takeCard()">Забрати собі</button>`;
-    html += `</div>`;
+    
+    if (data.canPlaceToSelf) {
+      html += `<button onclick="placeOnSelf()">📤 Покласти собі</button>`;
+    }
+    
+    html += `<button onclick="takeToHand()">🤚 ЗАБРАТИ СОБІ</button>`;
+    html += `</div></div>`;
     container.innerHTML += html;
   }
 
-  function takeCard() { socket.emit('takeCard', roomId); drawnCard = null; }
-  function placeCard(targetId) { socket.emit('placeCard', roomId, targetId); drawnCard = null; }
+  function redrawCard(targetId) { socket.emit('redrawCard', roomId, targetId); }
+  function skipRedraw() { socket.emit('skipRedraw', roomId); }
+  function takeToHand() { socket.emit('takeToHand', roomId); drawnCard = null; }
+  function placeOnSelf() { socket.emit('placeOnSelf', roomId); drawnCard = null; }
+  function placeOnOther(targetId) { socket.emit('placeOnOther', roomId, targetId); drawnCard = null; }
 
   socket.on('error', (msg) => {
-    document.getElementById('error').textContent = msg;
-    setTimeout(() => document.getElementById('error').textContent = '', 3000);
+    const err = document.getElementById('error');
+    if (err) { err.textContent = msg; setTimeout(() => err.textContent = '', 3000); }
+    addLog(`❌ ${msg}`);
   });
 </script>
 </body>
