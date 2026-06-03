@@ -48,15 +48,11 @@ io.on('connection', (socket) => {
   socket.on('createGame', () => {
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
     globalPlayerCounter++;
-    const playerNumber = globalPlayerCounter;
     rooms.set(roomId, {
       players: [socket.id],
-      playerNames: [{ id: socket.id, name: `Гравець ${playerNumber}` }],
+      playerNames: [{ id: socket.id, name: `Гравець ${globalPlayerCounter}` }],
       gameState: null,
-      penaltyCards: new Map(),
-      round: 1,
-      playerCounter: playerNumber,
-      trumpCard: null
+      round: 1
     });
     socket.join(roomId);
     socket.emit('gameCreated', roomId);
@@ -70,13 +66,11 @@ io.on('connection', (socket) => {
     }
     const room = rooms.get(roomId);
     if (room.players.length >= 6) {
-      socket.emit('error', 'Кімната повна (макс 6)');
+      socket.emit('error', 'Кімната повна');
       return;
     }
-    room.playerCounter++;
-    const playerNumber = room.playerCounter;
     room.players.push(socket.id);
-    room.playerNames.push({ id: socket.id, name: `Гравець ${playerNumber}` });
+    room.playerNames.push({ id: socket.id, name: `Гравець ${room.players.length + 1}` });
     socket.join(roomId);
     socket.emit('joined', roomId);
     io.to(roomId).emit('playerJoined', { count: room.players.length, players: room.playerNames });
@@ -88,104 +82,51 @@ io.on('connection', (socket) => {
       socket.emit('error', 'Потрібно мінімум 2 гравці');
       return;
     }
-    startNewRound(roomId);
+    startGame(roomId);
   });
 
-  function startNewRound(roomId) {
+  function startGame(roomId) {
     const room = rooms.get(roomId);
-    let gameDeck = shuffle([...fullDeck]);
-    
-    let trumpCard = gameDeck.pop();
-    if (trumpCard.suit === '♠') {
-      trumpCard = gameDeck.pop();
-    }
-    room.trumpCard = trumpCard;
+    let deck = shuffle([...fullDeck]);
     
     const playersData = [];
     for (let i = 0; i < room.players.length; i++) {
-      const penaltyCount = room.penaltyCards.get(room.players[i]) || 2;
-      const hidden = [];
-      for (let j = 0; j < penaltyCount; j++) {
-        if (gameDeck.length > 0) hidden.push(gameDeck.pop());
-      }
-      const openCard = gameDeck.pop();
+      const hidden = [deck.pop(), deck.pop()];
+      const openCard = deck.pop();
       playersData.push({
         id: room.players[i],
         name: room.playerNames.find(p => p.id === room.players[i]).name,
         hidden: hidden,
         openCard: openCard,
-        hand: [],
-        isActive: true,
-        penaltyCount: penaltyCount
+        hand: []
       });
     }
     
     room.gameState = {
-      deck: gameDeck,
-      trumpCard: room.trumpCard,
-      trumpSuit: room.trumpCard.suit,
+      deck: deck,
       players: playersData,
-      currentDrawPlayer: 0,
-      phase: 'drawing',
-      log: [`🎴 Раунд ${room.round} почався!`],
-      currentPlayerDrawing: true,
-      lastDrawnCard: null
+      currentTurn: 0,
+      log: ['Гра почалась!']
     };
     
     for (let p of room.gameState.players) {
       io.to(p.id).emit('gameStarted', {
         hiddenCards: p.hidden,
-        openCard: p.openCard,
-        playersCount: room.players.length,
-        yourName: p.name,
-        penaltyCount: p.penaltyCount
+        openCard: p.openCard
       });
     }
     
     io.to(roomId).emit('updateState', room.gameState);
-    announceTurn(roomId);
+    nextTurn(roomId);
   }
 
-  function announceTurn(roomId) {
+  function nextTurn(roomId) {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
     const state = room.gameState;
     
-    const activePlayers = state.players.filter(p => p.isActive);
-    if (activePlayers.length === 1) {
-      const winner = activePlayers[0];
-      io.to(roomId).emit('gameEnd', { winner: winner.name, message: `🏆 ${winner.name} переміг!` });
-      room.penaltyCards.set(winner.id, 2);
-      for (let p of state.players) {
-        if (p.id !== winner.id) {
-          const current = room.penaltyCards.get(p.id) || 2;
-          room.penaltyCards.set(p.id, current + 1);
-        }
-      }
-      room.round++;
-      startNewRound(roomId);
-      return;
-    }
-    
-    while (state.players[state.currentDrawPlayer] && !state.players[state.currentDrawPlayer].isActive) {
-      state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
-    }
-    
-    const currentPlayer = state.players[state.currentDrawPlayer];
-    state.currentPlayerDrawing = true;
-    io.to(roomId).emit('nextTurn', { 
-      playerId: currentPlayer.id, 
-      playerName: currentPlayer.name 
-    });
-  }
-
-  function canPlaceAnywhere(state, card, playerId) {
-    for (let p of state.players) {
-      if (p.id !== playerId && p.openCard && isOneLower(card, p.openCard)) {
-        return true;
-      }
-    }
-    return false;
+    const currentPlayer = state.players[state.currentTurn];
+    io.to(roomId).emit('yourTurn', { playerId: currentPlayer.id, playerName: currentPlayer.name });
   }
 
   socket.on('drawCard', (roomId) => {
@@ -194,121 +135,66 @@ io.on('connection', (socket) => {
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
     
-    if (!player || state.players[state.currentDrawPlayer].id !== socket.id) {
-      socket.emit('error', '❌ Зараз не твоя черга');
-      return;
-    }
-    
-    if (!state.currentPlayerDrawing) {
-      socket.emit('error', '❌ Ти вже маєш карту, обери дію');
+    if (state.players[state.currentTurn].id !== socket.id) {
+      socket.emit('error', 'Не твоя черга');
       return;
     }
     
     if (state.deck.length === 0) {
-      socket.emit('error', 'Колода порожня!');
+      socket.emit('error', 'Колода порожня');
       return;
     }
     
     const drawnCard = state.deck.pop();
+    socket.emit('cardDrawn', { card: drawnCard });
     state.lastDrawnCard = drawnCard;
-    state.currentPlayerDrawing = false;
-    
-    io.to(roomId).emit('cardDrawn', { card: drawnCard, playerId: socket.id });
-    socket.emit('needDecision', { 
-      card: drawnCard,
-      canPlaceAnywhere: canPlaceAnywhere(state, drawnCard, socket.id),
-      canPlaceOnSelf: (player.openCard && isOneLower(drawnCard, player.openCard))
-    });
   });
 
-  socket.on('placeOnOther', (roomId, targetPlayerId) => {
+  socket.on('takeCard', (roomId) => {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
-    const targetPlayer = state.players.find(p => p.id === targetPlayerId);
-    
-    if (!player || !targetPlayer || !state.lastDrawnCard) {
-      socket.emit('error', 'Помилка');
-      return;
-    }
-    
-    if (!targetPlayer.openCard || !isOneLower(state.lastDrawnCard, targetPlayer.openCard)) {
-      socket.emit('error', 'Не можна покласти на цю карту');
-      return;
-    }
-    
-    targetPlayer.openCard = state.lastDrawnCard;
-    state.log.push(`${player.name} поклав ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} на ${targetPlayer.name}`);
-    state.lastDrawnCard = null;
-    state.currentPlayerDrawing = true;
-    
-    io.to(roomId).emit('updateState', state);
-    
-    // Продовжуємо хід - гравець тягне наступну карту
-    io.to(socket.id).emit('continueTurn');
-  });
-
-  socket.on('placeOnSelf', (roomId) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.gameState) return;
-    const state = room.gameState;
-    const player = state.players.find(p => p.id === socket.id);
-    
-    if (!player || !state.lastDrawnCard) return;
-    
-    if (player.openCard && isOneLower(state.lastDrawnCard, player.openCard)) {
-      player.openCard = state.lastDrawnCard;
-      state.log.push(`${player.name} поклав ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} на свою карту`);
-      state.lastDrawnCard = null;
-      state.currentPlayerDrawing = true;
-      
-      io.to(roomId).emit('updateState', state);
-      io.to(socket.id).emit('continueTurn');
-    } else {
-      socket.emit('error', 'Не можна покласти на свою карту');
-    }
-  });
-
-  socket.on('takeToHand', (roomId) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.gameState) return;
-    const state = room.gameState;
-    const player = state.players.find(p => p.id === socket.id);
-    
-    if (!player || !state.lastDrawnCard) return;
     
     player.hand.push(state.lastDrawnCard);
-    state.log.push(`${player.name} забрав карту ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} собі в руку`);
+    state.log.push(`${player.name} забрав карту ${state.lastDrawnCard.value}${state.lastDrawnCard.suit}`);
     state.lastDrawnCard = null;
+    state.currentTurn = (state.currentTurn + 1) % state.players.length;
     
     io.to(roomId).emit('updateState', state);
+    nextTurn(roomId);
+  });
+
+  socket.on('placeCard', (roomId, targetPlayerId) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+    const state = room.gameState;
+    const player = state.players.find(p => p.id === socket.id);
+    const target = state.players.find(p => p.id === targetPlayerId);
     
-    // Хід закінчується
-    state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
-    state.currentPlayerDrawing = true;
-    announceTurn(roomId);
+    if (!target || !target.openCard) return;
+    
+    if (isOneLower(state.lastDrawnCard, target.openCard)) {
+      target.openCard = state.lastDrawnCard;
+      state.log.push(`${player.name} поклав ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} на карту ${target.name}`);
+      state.lastDrawnCard = null;
+      state.currentTurn = (state.currentTurn + 1) % state.players.length;
+      
+      io.to(roomId).emit('updateState', state);
+      nextTurn(roomId);
+    } else {
+      socket.emit('error', 'Не можна покласти');
+    }
   });
 
   socket.on('disconnect', () => {
-    console.log('Player disconnected:', socket.id);
     for (let [roomId, room] of rooms.entries()) {
       const index = room.players.indexOf(socket.id);
       if (index !== -1) {
         room.players.splice(index, 1);
         room.playerNames.splice(index, 1);
         io.to(roomId).emit('playerJoined', { count: room.players.length, players: room.playerNames });
-        if (room.gameState) {
-          const playerIndex = room.gameState.players.findIndex(p => p.id === socket.id);
-          if (playerIndex !== -1) {
-            room.gameState.players[playerIndex].isActive = false;
-          }
-          io.to(roomId).emit('updateState', room.gameState);
-          announceTurn(roomId);
-        }
-        if (room.players.length === 0) {
-          rooms.delete(roomId);
-        }
+        if (room.players.length === 0) rooms.delete(roomId);
         break;
       }
     }
@@ -316,6 +202,4 @@ io.on('connection', (socket) => {
 });
 
 const port = process.env.PORT || 3000;
-server.listen(port, () => {
-  console.log(`🎮 Server running on port ${port}`);
-});
+server.listen(port, () => console.log(`Server on port ${port}`));
