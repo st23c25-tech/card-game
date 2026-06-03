@@ -39,6 +39,20 @@ function isOneLower(card1, card2) {
   return rank1 === rank2 - 1;
 }
 
+// Перевірка, чи може гравець перекласти свою карту комусь
+function canRedraw(state, playerId) {
+  const player = state.players.find(p => p.id === playerId);
+  if (!player || !player.openCard) return [];
+  
+  const targets = [];
+  for (let p of state.players) {
+    if (p.id !== playerId && p.openCard && isOneLower(player.openCard, p.openCard)) {
+      targets.push(p);
+    }
+  }
+  return targets;
+}
+
 const rooms = new Map();
 let globalPlayerCounter = 0;
 
@@ -106,7 +120,8 @@ io.on('connection', (socket) => {
       deck: deck,
       players: playersData,
       currentTurn: 0,
-      log: ['Гра почалась!']
+      log: ['Гра почалась!'],
+      phase: 'redraw' // Спочатку фаза перекладання
     };
     
     for (let p of room.gameState.players) {
@@ -117,8 +132,110 @@ io.on('connection', (socket) => {
     }
     
     io.to(roomId).emit('updateState', room.gameState);
-    nextTurn(roomId);
+    startRedrawPhase(roomId);
   }
+
+  // Фаза перекладання карт перед ходом
+  function startRedrawPhase(roomId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+    const state = room.gameState;
+    
+    state.phase = 'redraw';
+    state.redrawCompleted = false;
+    state.players.forEach(p => p.hasRedrawn = false);
+    
+    io.to(roomId).emit('redrawPhaseStart', { message: 'Можете перекласти свої карти іншим гравцям' });
+    nextRedrawTurn(roomId);
+  }
+
+  function nextRedrawTurn(roomId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+    const state = room.gameState;
+    
+    // Перевіряємо, чи всі переклали
+    const allRedrawn = state.players.every(p => p.hasRedrawn === true);
+    if (allRedrawn) {
+      state.phase = 'drawing';
+      io.to(roomId).emit('redrawPhaseEnd');
+      nextTurn(roomId);
+      return;
+    }
+    
+    // Знаходимо наступного гравця, який ще не переклав
+    let currentIndex = state.currentRedrawIndex || 0;
+    while (currentIndex < state.players.length && state.players[currentIndex].hasRedrawn) {
+      currentIndex++;
+    }
+    
+    if (currentIndex >= state.players.length) {
+      state.phase = 'drawing';
+      io.to(roomId).emit('redrawPhaseEnd');
+      nextTurn(roomId);
+      return;
+    }
+    
+    state.currentRedrawIndex = currentIndex;
+    const currentPlayer = state.players[currentIndex];
+    const targets = canRedraw(state, currentPlayer.id);
+    
+    io.to(roomId).emit('redrawTurn', {
+      playerId: currentPlayer.id,
+      playerName: currentPlayer.name,
+      openCard: currentPlayer.openCard,
+      canRedraw: targets.length > 0,
+      targets: targets.map(t => ({ id: t.id, name: t.name }))
+    });
+  }
+
+  socket.on('redrawCard', (roomId, targetPlayerId) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState || room.gameState.phase !== 'redraw') return;
+    const state = room.gameState;
+    const player = state.players.find(p => p.id === socket.id);
+    const target = state.players.find(p => p.id === targetPlayerId);
+    
+    if (!player || player.hasRedrawn) {
+      socket.emit('error', 'Не можна перекласти');
+      return;
+    }
+    
+    if (!target || !target.openCard || !isOneLower(player.openCard, target.openCard)) {
+      socket.emit('error', 'Не можна перекласти на цю карту');
+      return;
+    }
+    
+    // Перекладаємо карту
+    const transferredCard = player.openCard;
+    player.openCard = null;
+    target.openCard = transferredCard;
+    player.hasRedrawn = true;
+    
+    // Якщо у гравця залишились закриті карти - відкриваємо нову
+    if (player.hidden && player.hidden.length > 0) {
+      player.openCard = player.hidden.pop();
+      state.log.push(`${player.name} відкрив нову карту: ${player.openCard.value}${player.openCard.suit}`);
+    }
+    
+    state.log.push(`${player.name} переклав ${transferredCard.value}${transferredCard.suit} на ${target.name}`);
+    io.to(roomId).emit('updateState', state);
+    
+    // Переходимо до наступного
+    nextRedrawTurn(roomId);
+  });
+
+  socket.on('skipRedraw', (roomId) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState || room.gameState.phase !== 'redraw') return;
+    const state = room.gameState;
+    const player = state.players.find(p => p.id === socket.id);
+    
+    if (player && !player.hasRedrawn) {
+      player.hasRedrawn = true;
+      nextRedrawTurn(roomId);
+    }
+  });
 
   function nextTurn(roomId) {
     const room = rooms.get(roomId);
@@ -126,7 +243,10 @@ io.on('connection', (socket) => {
     const state = room.gameState;
     
     const currentPlayer = state.players[state.currentTurn];
-    io.to(roomId).emit('yourTurn', { playerId: currentPlayer.id, playerName: currentPlayer.name });
+    io.to(roomId).emit('yourTurn', { 
+      playerId: currentPlayer.id, 
+      playerName: currentPlayer.name 
+    });
   }
 
   socket.on('drawCard', (roomId) => {
@@ -134,6 +254,11 @@ io.on('connection', (socket) => {
     if (!room || !room.gameState) return;
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
+    
+    if (state.phase !== 'drawing') {
+      socket.emit('error', 'Зараз не фаза тягнення');
+      return;
+    }
     
     if (state.players[state.currentTurn].id !== socket.id) {
       socket.emit('error', 'Не твоя черга');
@@ -165,14 +290,42 @@ io.on('connection', (socket) => {
     nextTurn(roomId);
   });
 
-  socket.on('placeCard', (roomId, targetPlayerId) => {
+  socket.on('placeOnSelf', (roomId) => {
+    const room = rooms.get(roomId);
+    if (!room || !room.gameState) return;
+    const state = room.gameState;
+    const player = state.players.find(p => p.id === socket.id);
+    
+    if (!player.openCard) {
+      socket.emit('error', 'Немає відкритої карти');
+      return;
+    }
+    
+    if (isOneLower(state.lastDrawnCard, player.openCard)) {
+      // Кладемо карту собі - вона стає новою відкритою
+      player.openCard = state.lastDrawnCard;
+      state.log.push(`${player.name} поклав ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} на свою карту`);
+      state.lastDrawnCard = null;
+      state.currentTurn = (state.currentTurn + 1) % state.players.length;
+      
+      io.to(roomId).emit('updateState', state);
+      nextTurn(roomId);
+    } else {
+      socket.emit('error', 'Не можна покласти на свою карту');
+    }
+  });
+
+  socket.on('placeOnOther', (roomId, targetPlayerId) => {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
     const target = state.players.find(p => p.id === targetPlayerId);
     
-    if (!target || !target.openCard) return;
+    if (!target || !target.openCard) {
+      socket.emit('error', 'Немає цілі');
+      return;
+    }
     
     if (isOneLower(state.lastDrawnCard, target.openCard)) {
       target.openCard = state.lastDrawnCard;
