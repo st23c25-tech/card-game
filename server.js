@@ -40,18 +40,22 @@ function isOneLower(card1, card2) {
 }
 
 const rooms = new Map();
+let globalPlayerCounter = 0;
 
 io.on('connection', (socket) => {
   console.log('👤 Гравець підключився:', socket.id);
 
   socket.on('createGame', () => {
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    globalPlayerCounter++;
+    const playerNumber = globalPlayerCounter;
     rooms.set(roomId, {
       players: [socket.id],
-      playerNames: [{ id: socket.id, name: `Гравець ${socket.id.slice(-4)}` }],
+      playerNames: [{ id: socket.id, name: `Гравець ${playerNumber}` }],
       gameState: null,
       penaltyCards: new Map(),
-      round: 1
+      round: 1,
+      playerCounter: playerNumber
     });
     socket.join(roomId);
     socket.emit('gameCreated', roomId);
@@ -68,8 +72,10 @@ io.on('connection', (socket) => {
       socket.emit('error', '❌ Кімната повна (макс 6 гравців)');
       return;
     }
+    room.playerCounter++;
+    const playerNumber = room.playerCounter;
     room.players.push(socket.id);
-    room.playerNames.push({ id: socket.id, name: `Гравець ${socket.id.slice(-4)}` });
+    room.playerNames.push({ id: socket.id, name: `Гравець ${playerNumber}` });
     socket.join(roomId);
     socket.emit('joined', roomId);
     io.to(roomId).emit('playerJoined', { count: room.players.length, players: room.playerNames });
@@ -117,7 +123,6 @@ io.on('connection', (socket) => {
       deck: gameDeck,
       trump: trump,
       players: playersData,
-      currentTurn: 0,
       currentDrawPlayer: 0,
       phase: 'drawing',
       log: [`🎴 Раунд ${room.round} почався! Козир: ${trump.value}${trump.suit}`],
@@ -137,13 +142,15 @@ io.on('connection', (socket) => {
     }
     
     io.to(roomId).emit('updateState', room.gameState);
-    nextTurn(roomId);
+    announceTurn(roomId);
   }
 
-  function nextTurn(roomId) {
+  function announceTurn(roomId) {
     const room = rooms.get(roomId);
     if (!room || !room.gameState) return;
     const state = room.gameState;
+    
+    // Перевірка на переможця
     const activePlayers = state.players.filter(p => p.isActive);
     if (activePlayers.length === 1) {
       const winner = activePlayers[0];
@@ -160,10 +167,19 @@ io.on('connection', (socket) => {
       return;
     }
     
-    while (state.players[state.currentTurn] && !state.players[state.currentTurn].isActive) {
-      state.currentTurn = (state.currentTurn + 1) % state.players.length;
+    // Пропускаємо неактивних гравців
+    let attempts = 0;
+    while (state.players[state.currentDrawPlayer] && !state.players[state.currentDrawPlayer].isActive && attempts < state.players.length) {
+      state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
+      attempts++;
     }
-    io.to(roomId).emit('nextTurn', { playerId: state.players[state.currentTurn].id, phase: state.phase });
+    
+    const currentPlayer = state.players[state.currentDrawPlayer];
+    io.to(roomId).emit('nextTurn', { 
+      playerId: currentPlayer.id, 
+      playerName: currentPlayer.name,
+      phase: state.phase 
+    });
   }
 
   socket.on('drawCard', (roomId) => {
@@ -171,13 +187,19 @@ io.on('connection', (socket) => {
     if (!room || !room.gameState) return;
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
-    if (!player || state.players[state.currentDrawPlayer].id !== socket.id || state.phase !== 'drawing') {
-      socket.emit('error', 'Зараз не твоя черга тягнути');
+    
+    if (!player || state.players[state.currentDrawPlayer].id !== socket.id) {
+      socket.emit('error', '❌ Зараз не твоя черга тягнути');
+      return;
+    }
+    
+    if (state.phase !== 'drawing') {
+      socket.emit('error', '❌ Зараз не фаза тягнення');
       return;
     }
     
     if (state.deck.length === 0) {
-      socket.emit('error', 'Колода порожня!');
+      socket.emit('error', '❌ Колода порожня!');
       return;
     }
     
@@ -185,6 +207,7 @@ io.on('connection', (socket) => {
     state.lastDrawnCard = drawnCard;
     state.waitingForPlace = true;
     io.to(roomId).emit('cardDrawn', { card: drawnCard, playerId: socket.id });
+    socket.emit('needDecision', { card: drawnCard });
   });
 
   socket.on('placeCard', (roomId, targetPlayerId) => {
@@ -192,11 +215,15 @@ io.on('connection', (socket) => {
     if (!room || !room.gameState) return;
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
-    if (!player || !state.waitingForPlace || state.phase !== 'drawing') return;
+    
+    if (!player || !state.waitingForPlace || state.phase !== 'drawing') {
+      socket.emit('error', '❌ Не можна покласти карту зараз');
+      return;
+    }
     
     const targetPlayer = state.players.find(p => p.id === targetPlayerId);
     if (!targetPlayer || !targetPlayer.openCard) {
-      socket.emit('error', 'Не можна покласти на цю карту');
+      socket.emit('error', '❌ Не можна покласти на цю карту');
       return;
     }
     
@@ -207,10 +234,12 @@ io.on('connection', (socket) => {
       state.lastDrawnCard = null;
       
       io.to(roomId).emit('updateState', state);
+      
+      // Перехід до наступного гравця
       state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
-      nextTurn(roomId);
+      announceTurn(roomId);
     } else {
-      socket.emit('error', 'Цю карту не можна покласти (потрібно на 1 нижче)');
+      socket.emit('error', '❌ Цю карту не можна покласти (потрібно на 1 нижче)');
     }
   });
 
@@ -219,15 +248,21 @@ io.on('connection', (socket) => {
     if (!room || !room.gameState) return;
     const state = room.gameState;
     const player = state.players.find(p => p.id === socket.id);
-    if (!player || !state.waitingForPlace || state.phase !== 'drawing') return;
+    
+    if (!player || !state.waitingForPlace || state.phase !== 'drawing') {
+      socket.emit('error', '❌ Не можна забрати карту зараз');
+      return;
+    }
     
     player.hand.push(state.lastDrawnCard);
     state.log.push(`${player.name} забрав карту ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} собі`);
     state.waitingForPlace = false;
     state.lastDrawnCard = null;
     io.to(roomId).emit('updateState', state);
+    
+    // Перехід до наступного гравця
     state.currentDrawPlayer = (state.currentDrawPlayer + 1) % state.players.length;
-    nextTurn(roomId);
+    announceTurn(roomId);
   });
 
   socket.on('disconnect', () => {
@@ -240,9 +275,11 @@ io.on('connection', (socket) => {
         io.to(roomId).emit('playerJoined', { count: room.players.length, players: room.playerNames });
         if (room.gameState) {
           const playerIndex = room.gameState.players.findIndex(p => p.id === socket.id);
-          if (playerIndex !== -1) room.gameState.players[playerIndex].isActive = false;
+          if (playerIndex !== -1) {
+            room.gameState.players[playerIndex].isActive = false;
+          }
           io.to(roomId).emit('updateState', room.gameState);
-          nextTurn(roomId);
+          announceTurn(roomId);
         }
         if (room.players.length === 0) {
           rooms.delete(roomId);
