@@ -19,24 +19,71 @@
       border: none;
       border-radius: 10px;
       font-weight: bold;
+      cursor: pointer;
     }
     .log {
       background: rgba(0,0,0,0.5);
       padding: 10px;
       border-radius: 10px;
-      height: 200px;
+      height: 150px;
       overflow-y: auto;
       margin-top: 15px;
       font-size: 12px;
     }
-    .card {
+    .players-board {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 15px 0;
+    }
+    .player-card {
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      border-radius: 10px;
+      min-width: 100px;
+      text-align: center;
+    }
+    .player-card.current {
+      border: 3px solid gold;
+    }
+    .open-card {
+      font-size: 28px;
+      background: white;
+      color: black;
+      display: inline-block;
+      padding: 8px 15px;
+      border-radius: 10px;
+      margin: 8px 0;
+    }
+    .drawn-area {
+      background: gold;
+      padding: 15px;
+      border-radius: 15px;
+      text-align: center;
+      margin: 15px 0;
+    }
+    .big-card {
       background: white;
       color: black;
       display: inline-block;
       padding: 15px 25px;
       border-radius: 10px;
-      font-size: 24px;
-      margin: 10px;
+      font-size: 32px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .action-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+    .redraw-area {
+      background: #4CAF50;
+      padding: 15px;
+      border-radius: 15px;
+      text-align: center;
+      margin: 15px 0;
     }
   </style>
 </head>
@@ -110,6 +157,21 @@
     renderGame();
   });
 
+  socket.on('redrawPhaseStart', (data) => {
+    addLog(`🔄 ${data.message}`);
+  });
+
+  socket.on('redrawPhaseEnd', () => {
+    addLog(`✅ Фаза перекладання завершена`);
+  });
+
+  socket.on('redrawTurn', (data) => {
+    if (data.playerId === socket.id) {
+      addLog(`🎯 ВАША ЧЕРГА перекласти карту! Ваша карта: ${data.openCard.value}${data.openCard.suit}`);
+      showRedrawButtons(data);
+    }
+  });
+
   socket.on('yourTurn', (data) => {
     if (data.playerId === socket.id) {
       addLog('🎯 ВАША ЧЕРГА! Натисніть "Тягнути карту"');
@@ -127,42 +189,87 @@
 
   function renderGame() {
     if (!gameState) return;
-    let html = '<div style="display:flex; flex-wrap:wrap; gap:10px;">';
-    for (let p of gameState.players) {
-      html += `<div style="background:rgba(0,0,0,0.5); padding:10px; border-radius:10px; min-width:100px;">
+    let html = '<div class="players-board">';
+    for (let i = 0; i < gameState.players.length; i++) {
+      const p = gameState.players[i];
+      const isCurrent = gameState.currentTurn === i;
+      html += `<div class="player-card ${isCurrent ? 'current' : ''}">
         <b>${p.name}</b><br>
-        <span style="font-size:24px;">${p.openCard?.value || '?'}${p.openCard?.suit || ''}</span><br>
-        🔒${p.hidden?.length || 0}
+        <div class="open-card">${p.openCard?.value || '?'}${p.openCard?.suit || ''}</div>
+        <div>🔒 ${p.hidden?.length || 0}</div>
+        <div>📋 ${p.hand?.length || 0}</div>
       </div>`;
     }
     html += '</div>';
+    
+    const me = gameState.players.find(p => p.id === socket.id);
+    if (me && me.hand && me.hand.length > 0) {
+      html += `<div style="background:rgba(0,0,0,0.4); padding:10px; border-radius:10px; margin-top:10px;">
+        <b>🎴 Ваші карти на руках:</b><br>
+        ${me.hand.map(c => `<span style="background:white; color:black; padding:5px 10px; margin:3px; display:inline-block; border-radius:8px;">${c.value}${c.suit}</span>`).join('')}
+      </div>`;
+    }
+    
     document.getElementById('gameInner').innerHTML = html;
   }
 
+  function showRedrawButtons(data) {
+    const container = document.getElementById('gameInner');
+    if (!container) return;
+    
+    let html = `<div class="redraw-area">
+      <div class="big-card">${data.openCard.value}${data.openCard.suit}</div>
+      <div class="action-buttons">`;
+    
+    if (data.canRedraw && data.targets) {
+      for (let t of data.targets) {
+        html += `<button onclick="redrawCard('${t.id}')">🔄 Перекласти на ${t.name}</button>`;
+      }
+    }
+    html += `<button onclick="skipRedraw()">⏭️ Пропустити</button>`;
+    html += `</div></div>`;
+    container.innerHTML += html;
+  }
+
   function showDrawButton() {
-    if (!drawnCard) {
-      document.getElementById('gameInner').innerHTML += `<button onclick="drawCard()">🎴 Тягнути карту</button>`;
+    if (!drawnCard && gameState?.phase === 'drawing') {
+      const container = document.getElementById('gameInner');
+      if (container) {
+        container.innerHTML += `<div class="action-buttons"><button onclick="drawCard()">🎴 Тягнути карту</button></div>`;
+      }
     }
   }
 
   function showPlaceButtons() {
     if (!gameState || !drawnCard) return;
-    let html = `<div style="background:gold; padding:15px; border-radius:15px; margin-top:10px;">
-      <div style="background:white; color:black; display:inline-block; padding:10px 20px; border-radius:10px; font-size:24px;">${drawnCard.value}${drawnCard.suit}</div>`;
+    const me = gameState.players.find(p => p.id === socket.id);
+    
+    let html = `<div class="drawn-area">
+      <div class="big-card">${drawnCard.value}${drawnCard.suit}</div>
+      <div class="action-buttons">`;
     
     for (let p of gameState.players) {
       if (p.id !== socket.id && p.openCard) {
-        html += `<button onclick="placeCard('${p.id}')">📤 Покласти на ${p.name}</button>`;
+        html += `<button onclick="placeOnOther('${p.id}')">📤 Покласти на ${p.name}</button>`;
       }
     }
+    
+    if (me && me.openCard) {
+      html += `<button onclick="placeOnSelf()">📤 Покласти на себе</button>`;
+    }
+    
     html += `<button onclick="takeCard()">🤚 Забрати собі</button>`;
-    html += `</div>`;
+    html += `</div></div>`;
+    
     document.getElementById('gameInner').innerHTML += html;
   }
 
   function drawCard() { socket.emit('drawCard', roomId); }
   function takeCard() { socket.emit('takeCard', roomId); drawnCard = null; }
-  function placeCard(targetId) { socket.emit('placeCard', roomId, targetId); drawnCard = null; }
+  function placeOnSelf() { socket.emit('placeOnSelf', roomId); drawnCard = null; }
+  function placeOnOther(targetId) { socket.emit('placeOnOther', roomId, targetId); drawnCard = null; }
+  function redrawCard(targetId) { socket.emit('redrawCard', roomId, targetId); }
+  function skipRedraw() { socket.emit('skipRedraw', roomId); }
 
   socket.on('error', (msg) => {
     const err = document.getElementById('error');
