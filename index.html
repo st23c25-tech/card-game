@@ -87,6 +87,7 @@
       text-align: center;
       color: #333;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      transition: all 0.1s ease;
     }
     .player-card.current {
       background: #ff6b9d;
@@ -102,6 +103,12 @@
       font-weight: bold;
       margin: 8px 0;
     }
+    .card-black {
+      color: #000000;
+    }
+    .card-red {
+      color: #ff0000;
+    }
     .hidden-count {
       font-size: 12px;
     }
@@ -111,17 +118,17 @@
       padding: 12px;
       margin-top: 15px;
     }
-    .hand-cards span {
+    .hand-card {
+      display: inline-block;
       background: white;
-      color: #333;
       padding: 6px 12px;
       margin: 4px;
-      display: inline-block;
       border-radius: 20px;
       font-weight: bold;
+      font-size: 18px;
     }
     .action-panel {
-      background: rgba(255,255,255,0.9);
+      background: rgba(255,255,255,0.95);
       border-radius: 30px;
       padding: 20px;
       margin-top: 20px;
@@ -140,7 +147,7 @@
       background: #ff6b9d;
       color: white;
       border: none;
-      padding: 14px 24px;
+      padding: 12px 20px;
       font-size: 16px;
       border-radius: 40px;
       margin: 8px;
@@ -166,9 +173,10 @@
       margin-top: 10px;
     }
     @media (max-width: 600px) {
-      .action-btn { padding: 12px 18px; font-size: 14px; }
+      .action-btn { padding: 10px 16px; font-size: 14px; }
       .open-card { font-size: 24px; }
       .player-card { min-width: 80px; }
+      .drawn-card { font-size: 36px; padding: 10px 18px; }
     }
   </style>
 </head>
@@ -200,6 +208,16 @@
   let gameState = null;
   let drawnCard = null;
   let waitingForAction = false;
+
+  function getCardColor(card) {
+    if (!card) return '';
+    return (card.suit === '♥' || card.suit === '♦') ? 'card-red' : 'card-black';
+  }
+
+  function formatCard(card) {
+    if (!card) return '?';
+    return `${card.value}${card.suit}`;
+  }
 
   function addLog(msg) {
     const logDiv = document.getElementById('log');
@@ -251,9 +269,17 @@
     document.getElementById('gameArea').innerHTML = '<div id="gameInner"></div>';
   });
 
+  socket.on('gameEnd', (data) => {
+    addLog(`🏆 ${data.winner} ПЕРЕМІГ! 🏆`);
+    setTimeout(() => location.reload(), 5000);
+  });
+
   socket.on('updateState', (state) => {
     gameState = state;
-    if (state.log && state.log.length) addLog(state.log[state.log.length - 1]);
+    if (state.log && state.log.length) {
+      const lastMsg = state.log[state.log.length - 1];
+      if (lastMsg) addLog(lastMsg);
+    }
     renderGame();
   });
 
@@ -272,9 +298,9 @@
   socket.on('cardDrawn', (data) => {
     drawnCard = data.card;
     waitingForAction = true;
-    addLog(`🎴 Ви витягнули: ${data.card.value}${data.card.suit}`);
+    addLog(`🎴 Ви витягнули: ${formatCard(data.card)}`);
     renderGame();
-    showPlaceButtons();
+    showPlaceButtons(data);
   });
 
   function renderGame() {
@@ -288,7 +314,7 @@
       const isCurrent = gameState.currentTurn === i;
       html += `<div class="player-card ${isCurrent ? 'current' : ''}">
         <div class="player-name">${p.name}</div>
-        <div class="open-card">${p.openCard?.value || '?'}${p.openCard?.suit || ''}</div>
+        <div class="open-card ${getCardColor(p.openCard)}">${formatCard(p.openCard)}</div>
         <div class="hidden-count">🔒 ${p.hidden?.length || 0}</div>
         <div class="hidden-count">📋 ${p.hand?.length || 0}</div>
       </div>`;
@@ -298,7 +324,9 @@
     const me = gameState.players.find(p => p.id === socket.id);
     if (me && me.hand && me.hand.length > 0) {
       html += `<div class="hand-cards"><b>🎴 Ваші карти:</b><br>`;
-      html += me.hand.map(c => `<span>${c.value}${c.suit}</span>`).join('');
+      for (let c of me.hand) {
+        html += `<span class="hand-card ${getCardColor(c)}">${formatCard(c)}</span>`;
+      }
       html += `</div>`;
     }
     
@@ -309,8 +337,10 @@
     if (waitingForAction || drawnCard) return;
     const container = document.getElementById('gameInner');
     if (!container) return;
+    if (document.getElementById('drawBtn')) return;
     
     const btn = document.createElement('button');
+    btn.id = 'drawBtn';
     btn.textContent = '🎴 ВЗЯТИ КАРТУ';
     btn.className = 'action-btn';
     btn.style.display = 'block';
@@ -322,32 +352,32 @@
     container.appendChild(btn);
   }
 
-  function showPlaceButtons() {
+  function showPlaceButtons(data) {
     if (!gameState || !drawnCard) return;
     const container = document.getElementById('gameInner');
-    const me = gameState.players.find(p => p.id === socket.id);
+    if (document.querySelector('.action-panel')) return;
     
     let html = `<div class="action-panel">
-      <div class="drawn-card">${drawnCard.value}${drawnCard.suit}</div>
+      <div class="drawn-card ${getCardColor(drawnCard)}">${formatCard(drawnCard)}</div>
       <div>`;
     
-    for (let p of gameState.players) {
-      if (p.id !== socket.id && p.openCard) {
-        html += `<button class="action-btn" onclick="placeOnOther('${p.id}')">📤 Покласти на ${p.name}</button>`;
+    if (data.canPlaceToOthers && data.canPlaceToOthers.length > 0) {
+      for (let t of data.canPlaceToOthers) {
+        html += `<button class="action-btn" onclick="placeOnOther('${t.id}')">📤 Покласти ${t.name} (${formatCard(t.openCard)})</button>`;
       }
     }
     
-    if (me && me.openCard) {
-      html += `<button class="action-btn" onclick="placeOnSelf()">📤 Покласти на себе</button>`;
+    if (data.canPlaceToSelf) {
+      html += `<button class="action-btn" onclick="placeOnSelf()">📤 Покласти собі</button>`;
     }
     
-    html += `<button class="action-btn" onclick="takeCard()">🤚 ЗАБРАТИ СОБІ</button>`;
+    html += `<button class="action-btn" onclick="takeToHand()">🤚 ЗАБРАТИ СОБІ</button>`;
     html += `</div></div>`;
     
     container.innerHTML += html;
   }
 
-  function takeCard() { socket.emit('takeCard', roomId); drawnCard = null; waitingForAction = false; }
+  function takeToHand() { socket.emit('takeToHand', roomId); drawnCard = null; waitingForAction = false; }
   function placeOnSelf() { socket.emit('placeOnSelf', roomId); drawnCard = null; waitingForAction = false; }
   function placeOnOther(targetId) { socket.emit('placeOnOther', roomId, targetId); drawnCard = null; waitingForAction = false; }
 
