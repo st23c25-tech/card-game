@@ -1,264 +1,384 @@
-const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Карткова гра</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+      min-height: 100vh;
+      padding: 16px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+      margin-bottom: 20px;
+      font-size: 28px;
+    }
+    .lobby {
+      background: rgba(255,255,255,0.3);
+      backdrop-filter: blur(10px);
+      border-radius: 30px;
+      padding: 30px;
+      text-align: center;
+    }
+    .lobby button {
+      background: #ff6b9d;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 18px;
+      border-radius: 30px;
+      margin: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .lobby input {
+      padding: 14px;
+      font-size: 16px;
+      border-radius: 30px;
+      border: none;
+      text-align: center;
+      width: 200px;
+    }
+    .game {
+      background: rgba(255,255,255,0.3);
+      backdrop-filter: blur(10px);
+      border-radius: 30px;
+      padding: 20px;
+      display: none;
+    }
+    .room-header {
+      text-align: center;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+    .players-list {
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 12px;
+      margin-bottom: 15px;
+      text-align: center;
+    }
+    .players-board {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    .player-card {
+      background: rgba(255,255,255,0.9);
+      border-radius: 20px;
+      padding: 12px;
+      min-width: 100px;
+      text-align: center;
+      color: #333;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+    .player-card.current {
+      background: #ff6b9d;
+      color: white;
+      box-shadow: 0 0 15px #ff6b9d;
+    }
+    .player-name {
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .open-card {
+      font-size: 32px;
+      font-weight: bold;
+      margin: 8px 0;
+    }
+    .card-black {
+      color: #000000;
+    }
+    .card-red {
+      color: #ff0000;
+    }
+    .hidden-count {
+      font-size: 12px;
+    }
+    .hand-cards {
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 12px;
+      margin-top: 15px;
+    }
+    .hand-card {
+      display: inline-block;
+      background: white;
+      padding: 6px 12px;
+      margin: 4px;
+      border-radius: 20px;
+      font-weight: bold;
+      font-size: 18px;
+    }
+    .action-panel {
+      background: rgba(255,255,255,0.95);
+      border-radius: 30px;
+      padding: 20px;
+      margin-top: 20px;
+      text-align: center;
+    }
+    .drawn-card {
+      font-size: 48px;
+      background: #ff6b9d;
+      color: white;
+      display: inline-block;
+      padding: 15px 25px;
+      border-radius: 20px;
+      margin-bottom: 15px;
+    }
+    .action-btn {
+      background: #ff6b9d;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      font-size: 16px;
+      border-radius: 40px;
+      margin: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .action-btn:active {
+      transform: scale(0.97);
+    }
+    .log {
+      background: rgba(0,0,0,0.5);
+      border-radius: 20px;
+      padding: 12px;
+      height: 120px;
+      overflow-y: auto;
+      font-size: 12px;
+      color: white;
+      margin-top: 15px;
+    }
+    .error {
+      color: #ff4444;
+      margin-top: 10px;
+    }
+    @media (max-width: 600px) {
+      .action-btn { padding: 10px 16px; font-size: 14px; }
+      .open-card { font-size: 24px; }
+      .player-card { min-width: 80px; }
+      .drawn-card { font-size: 36px; padding: 10px 18px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🌸 КАРТКОВА ГРА 🌸</h1>
+  
+  <div id="lobby" class="lobby">
+    <button onclick="createGame()">✨ Створити гру</button><br>
+    <input type="text" id="roomCode" placeholder="Код кімнати" autocomplete="off">
+    <button onclick="joinGame()">🔗 Приєднатись</button>
+    <div id="error" class="error"></div>
+  </div>
+  
+  <div id="game" class="game">
+    <div class="room-header">
+      🏠 Кімната: <b id="roomId"></b>
+      <button onclick="copyCode()" style="background:#ff6b9d; color:white; border:none; padding:4px 12px; border-radius:20px;">📋 Копія</button>
+    </div>
+    <div id="playersList" class="players-list"></div>
+    <div id="gameArea"></div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
 
-const app = express();
-const server = http.createServer(app);
-const io = socketIo(server);
+<script>
+  const socket = io();
+  let roomId = null;
+  let gameState = null;
+  let drawnCard = null;
+  let waitingForAction = false;
 
-app.use(express.static(__dirname));
-
-const suits = ['♠', '♥', '♣', '♦'];
-const suitColors = { '♠': 'black', '♣': 'black', '♥': 'red', '♦': 'red' };
-const values = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-let fullDeck = [];
-
-for (let s of suits) {
-  for (let v of values) {
-    fullDeck.push({ suit: s, value: v, color: suitColors[s] });
+  function getCardColor(card) {
+    if (!card) return '';
+    return (card.suit === '♥' || card.suit === '♦') ? 'card-red' : 'card-black';
   }
-}
 
-function shuffle(d) {
-  for (let i = d.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [d[i], d[j]] = [d[j], d[i]];
+  function formatCard(card) {
+    if (!card) return '?';
+    return `${card.value}${card.suit}`;
   }
-  return d;
-}
 
-function getValueRank(value) {
-  const order = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-  return order.indexOf(value);
-}
+  function addLog(msg) {
+    const logDiv = document.getElementById('log');
+    if (logDiv) logDiv.innerHTML += `<p>${msg}</p>`;
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
 
-function isOneLower(card1, card2) {
-  if (!card1 || !card2) return false;
-  const rank1 = getValueRank(card1.value);
-  const rank2 = getValueRank(card2.value);
-  if (card1.value === '6' && card2.value === 'A') return true;
-  return rank1 === rank2 - 1;
-}
+  function createGame() { socket.emit('createGame'); }
+  function joinGame() { socket.emit('joinGame', document.getElementById('roomCode').value.trim().toUpperCase()); }
+  function copyCode() { navigator.clipboard.writeText(roomId); addLog('📋 Код скопійовано!'); }
 
-const rooms = new Map();
-let globalPlayerCounter = 0;
-
-io.on('connection', (socket) => {
-  console.log('Player connected:', socket.id);
-
-  socket.on('createGame', () => {
-    const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-    globalPlayerCounter++;
-    rooms.set(roomId, {
-      players: [socket.id],
-      playerNames: [{ id: socket.id, name: `Гравець ${globalPlayerCounter}` }],
-      gameState: null
-    });
-    socket.join(roomId);
-    socket.emit('gameCreated', roomId);
+  socket.on('gameCreated', (id) => {
+    roomId = id;
+    document.getElementById('lobby').style.display = 'none';
+    document.getElementById('game').style.display = 'block';
+    document.getElementById('roomId').textContent = id;
+    addLog('✅ Кімнату створено! Код: ' + id);
   });
 
-  socket.on('joinGame', (roomId) => {
-    if (!rooms.has(roomId)) {
-      socket.emit('error', 'Кімнати не існує');
-      return;
-    }
-    const room = rooms.get(roomId);
-    if (room.players.length >= 6) {
-      socket.emit('error', 'Кімната повна');
-      return;
-    }
-    room.players.push(socket.id);
-    room.playerNames.push({ id: socket.id, name: `Гравець ${room.players.length}` });
-    socket.join(roomId);
-    socket.emit('joined', roomId);
-    io.to(roomId).emit('playerJoined', { count: room.players.length, players: room.playerNames });
+  socket.on('joined', (id) => {
+    roomId = id;
+    document.getElementById('lobby').style.display = 'none';
+    document.getElementById('game').style.display = 'block';
+    document.getElementById('roomId').textContent = id;
+    addLog('✅ Приєднано до кімнати!');
   });
 
-  socket.on('startGame', (roomId) => {
-    const room = rooms.get(roomId);
-    if (!room || room.players.length < 2) {
-      socket.emit('error', 'Потрібно мінімум 2 гравці');
-      return;
+  socket.on('playerJoined', (data) => {
+    const div = document.getElementById('playersList');
+    div.innerHTML = `👥 Гравці: ${data.players.map(p => p.name).join(', ')} (${data.count}/6)`;
+    if (data.count >= 2 && !document.getElementById('startBtn')) {
+      const btn = document.createElement('button');
+      btn.id = 'startBtn';
+      btn.textContent = '🚀 Почати гру';
+      btn.onclick = () => socket.emit('startGame', roomId);
+      btn.style.background = '#ff6b9d';
+      btn.style.color = 'white';
+      btn.style.padding = '12px 24px';
+      btn.style.border = 'none';
+      btn.style.borderRadius = '30px';
+      btn.style.marginTop = '10px';
+      btn.style.cursor = 'pointer';
+      div.appendChild(btn);
+    }
+  });
+
+  socket.on('gameStarted', () => {
+    addLog('🎮 ГРА ПОЧАЛАСЯ!');
+    document.getElementById('gameArea').innerHTML = '<div id="gameInner"></div>';
+  });
+
+  socket.on('updateState', (state) => {
+    gameState = state;
+    if (state.log && state.log.length) {
+      const lastMsg = state.log[state.log.length - 1];
+      if (lastMsg) addLog(lastMsg);
+    }
+    renderGame();
+  });
+
+  socket.on('yourTurn', (data) => {
+    if (data.playerId === socket.id) {
+      addLog('💖 ВАША ЧЕРГА! Натисніть "Взяти карту"');
+      waitingForAction = false;
+      drawnCard = null;
+      renderGame();
+      showDrawButton();
+    } else {
+      addLog(`🔄 Черга: ${data.playerName}`);
+    }
+  });
+
+  socket.on('cardDrawn', (data) => {
+    drawnCard = data.card;
+    waitingForAction = true;
+    addLog(`🎴 Ви витягнули: ${formatCard(data.card)}`);
+    renderGame();
+    showPlaceButtons(data);
+  });
+
+  function renderGame() {
+    if (!gameState) return;
+    const container = document.getElementById('gameInner');
+    if (!container) return;
+    
+    let html = '<div class="players-board">';
+    for (let i = 0; i < gameState.players.length; i++) {
+      const p = gameState.players[i];
+      const isCurrent = gameState.currentTurn === i;
+      html += `<div class="player-card ${isCurrent ? 'current' : ''}">
+        <div class="player-name">${p.name}</div>
+        <div class="open-card ${getCardColor(p.openCard)}">${formatCard(p.openCard)}</div>
+        <div class="hidden-count">🔒 ${p.hidden?.length || 0}</div>
+        <div class="hidden-count">📋 ${p.hand?.length || 0}</div>
+      </div>`;
+    }
+    html += '</div>';
+    
+    const me = gameState.players.find(p => p.id === socket.id);
+    if (me && me.hand && me.hand.length > 0) {
+      html += `<div class="hand-cards"><b>🎴 Ваші карти:</b><br>`;
+      for (let c of me.hand) {
+        html += `<span class="hand-card ${getCardColor(c)}">${formatCard(c)}</span>`;
+      }
+      html += `</div>`;
     }
     
-    let deck = shuffle([...fullDeck]);
-    const playersData = [];
-    for (let i = 0; i < room.players.length; i++) {
-      playersData.push({
-        id: room.players[i],
-        name: room.playerNames.find(p => p.id === room.players[i]).name,
-        hidden: [deck.pop(), deck.pop()],
-        openCard: deck.pop(),
-        hand: []
-      });
-    }
+    container.innerHTML = html;
+  }
+
+  function showDrawButton() {
+    if (waitingForAction || drawnCard) return;
+    const container = document.getElementById('gameInner');
+    if (!container) return;
+    if (document.getElementById('drawBtn')) return;
     
-    room.gameState = {
-      deck: deck,
-      players: playersData,
-      currentTurn: 0,
-      waitingForAction: false,
-      log: ['🎮 Гра почалась!']
+    const btn = document.createElement('button');
+    btn.id = 'drawBtn';
+    btn.textContent = '🎴 ВЗЯТИ КАРТУ';
+    btn.className = 'action-btn';
+    btn.style.display = 'block';
+    btn.style.margin = '20px auto';
+    btn.onclick = () => {
+      socket.emit('drawCard', roomId);
+      btn.remove();
     };
-    
-    for (let p of room.gameState.players) {
-      io.to(p.id).emit('gameStarted', {
-        hiddenCards: p.hidden,
-        openCard: p.openCard
-      });
-    }
-    
-    io.to(roomId).emit('updateState', room.gameState);
-    nextTurn(roomId);
-  });
-
-  function nextTurn(roomId) {
-    const room = rooms.get(roomId);
-    if (!room || !room.gameState) return;
-    const state = room.gameState;
-    
-    // Перевірка на переможця
-    const playersWithCards = state.players.filter(p => p.hidden.length > 0 || p.hand.length > 0);
-    if (playersWithCards.length === 1) {
-      io.to(roomId).emit('gameEnd', { winner: playersWithCards[0].name });
-      return;
-    }
-    
-    state.waitingForAction = false;
-    const currentPlayer = state.players[state.currentTurn];
-    io.to(roomId).emit('yourTurn', { playerId: currentPlayer.id, playerName: currentPlayer.name });
+    container.appendChild(btn);
   }
 
-  socket.on('drawCard', (roomId) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.gameState) return;
-    const state = room.gameState;
-    const player = state.players.find(p => p.id === socket.id);
+  function showPlaceButtons(data) {
+    if (!gameState || !drawnCard) return;
+    const container = document.getElementById('gameInner');
+    if (document.querySelector('.action-panel')) return;
     
-    if (state.waitingForAction) {
-      socket.emit('error', 'Спочатку розмісти попередню карту');
-      return;
-    }
+    let html = `<div class="action-panel">
+      <div class="drawn-card ${getCardColor(drawnCard)}">${formatCard(drawnCard)}</div>
+      <div>`;
     
-    if (state.players[state.currentTurn].id !== socket.id) {
-      socket.emit('error', 'Не твоя черга');
-      return;
-    }
-    
-    if (state.deck.length === 0) {
-      socket.emit('error', 'Колода порожня! Гра завершується');
-      return;
-    }
-    
-    const drawnCard = state.deck.pop();
-    state.lastDrawnCard = drawnCard;
-    state.waitingForAction = true;
-    
-    // Знаходимо, кому можна покласти карту
-    const canPlaceToOthers = [];
-    for (let p of state.players) {
-      if (p.id !== socket.id && p.openCard && isOneLower(drawnCard, p.openCard)) {
-        canPlaceToOthers.push({ id: p.id, name: p.name, openCard: p.openCard });
+    if (data.canPlaceToOthers && data.canPlaceToOthers.length > 0) {
+      for (let t of data.canPlaceToOthers) {
+        html += `<button class="action-btn" onclick="placeOnOther('${t.id}')">📤 Покласти ${t.name} (${formatCard(t.openCard)})</button>`;
       }
     }
-    const canPlaceToSelf = player.openCard && isOneLower(drawnCard, player.openCard);
     
-    io.to(socket.id).emit('cardDrawn', {
-      card: drawnCard,
-      canPlaceToOthers: canPlaceToOthers,
-      canPlaceToSelf: canPlaceToSelf
-    });
-    io.to(roomId).emit('updateState', state);
-  });
+    if (data.canPlaceToSelf) {
+      html += `<button class="action-btn" onclick="placeOnSelf()">📤 Покласти собі</button>`;
+    }
+    
+    html += `<button class="action-btn" onclick="takeToHand()">🤚 ЗАБРАТИ СОБІ</button>`;
+    html += `</div></div>`;
+    
+    container.innerHTML += html;
+  }
 
-  socket.on('placeOnOther', (roomId, targetPlayerId) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.gameState) return;
-    const state = room.gameState;
-    const player = state.players.find(p => p.id === socket.id);
-    const target = state.players.find(p => p.id === targetPlayerId);
-    
-    if (!state.waitingForAction) {
-      socket.emit('error', 'Спочатку візьми карту');
-      return;
-    }
-    
-    if (!target || !target.openCard || !isOneLower(state.lastDrawnCard, target.openCard)) {
-      socket.emit('error', 'Не можна покласти на цю карту');
-      return;
-    }
-    
-    target.openCard = state.lastDrawnCard;
-    state.log.push(`${player.name} поклав ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} на карту ${target.name}`);
-    state.lastDrawnCard = null;
-    state.waitingForAction = false;
-    state.currentTurn = (state.currentTurn + 1) % state.players.length;
-    
-    io.to(roomId).emit('updateState', state);
-    nextTurn(roomId);
-  });
+  function takeToHand() { socket.emit('takeToHand', roomId); drawnCard = null; waitingForAction = false; }
+  function placeOnSelf() { socket.emit('placeOnSelf', roomId); drawnCard = null; waitingForAction = false; }
+  function placeOnOther(targetId) { socket.emit('placeOnOther', roomId, targetId); drawnCard = null; waitingForAction = false; }
 
-  socket.on('placeOnSelf', (roomId) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.gameState) return;
-    const state = room.gameState;
-    const player = state.players.find(p => p.id === socket.id);
-    
-    if (!state.waitingForAction) {
-      socket.emit('error', 'Спочатку візьми карту');
-      return;
-    }
-    
-    if (!player.openCard || !isOneLower(state.lastDrawnCard, player.openCard)) {
-      socket.emit('error', 'Не можна покласти на свою карту');
-      return;
-    }
-    
-    player.openCard = state.lastDrawnCard;
-    state.log.push(`${player.name} поклав ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} на свою карту`);
-    state.lastDrawnCard = null;
-    state.waitingForAction = false;
-    state.currentTurn = (state.currentTurn + 1) % state.players.length;
-    
-    io.to(roomId).emit('updateState', state);
-    nextTurn(roomId);
+  socket.on('error', (msg) => {
+    const errDiv = document.getElementById('error');
+    if (errDiv) { errDiv.textContent = msg; setTimeout(() => errDiv.textContent = '', 3000); }
+    addLog(`❌ ${msg}`);
   });
-
-  socket.on('takeToHand', (roomId) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.gameState) return;
-    const state = room.gameState;
-    const player = state.players.find(p => p.id === socket.id);
-    
-    if (!state.waitingForAction) {
-      socket.emit('error', 'Спочатку візьми карту');
-      return;
-    }
-    
-    player.hand.push(state.lastDrawnCard);
-    state.log.push(`${player.name} забрав карту ${state.lastDrawnCard.value}${state.lastDrawnCard.suit} собі`);
-    state.lastDrawnCard = null;
-    state.waitingForAction = false;
-    state.currentTurn = (state.currentTurn + 1) % state.players.length;
-    
-    io.to(roomId).emit('updateState', state);
-    nextTurn(roomId);
-  });
-
-  socket.on('disconnect', () => {
-    for (let [roomId, room] of rooms.entries()) {
-      const index = room.players.indexOf(socket.id);
-      if (index !== -1) {
-        room.players.splice(index, 1);
-        room.playerNames.splice(index, 1);
-        io.to(roomId).emit('playerJoined', { count: room.players.length, players: room.playerNames });
-        if (room.players.length === 0) rooms.delete(roomId);
-        break;
-      }
-    }
-  });
-});
-
-const port = process.env.PORT || 3000;
-server.listen(port, () => console.log(`Server on port ${port}`));
+</script>
+</body>
+</html>
